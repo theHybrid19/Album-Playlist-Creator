@@ -4,4 +4,5 @@ TO DO LIST
 - Add a music tag viewer
 - Add album-art edit feature
 - Intergrate a music platform API
-Version 1.0
+
+APC Version 1.0
