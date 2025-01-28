@@ -6,13 +6,17 @@ How To Install and Run
 * python3 -m pip install -r requirements.txt
 * python3 playlist_creator.py
 
-Adds Track Number, Album/Playlist Name, New Album/Playlist Folder, Disk Number.
-Easier for most Music Players to locate and group the Playlist/Album as one.
+Key Features Added:
+Logging: Added logging to track progress and errors.
 
+Error Handling: Robust error handling for API requests, file operations, and user input.
 
-TO DO LIST
-- Add a music tag viewer
-- Add album-art edit feature
-- Intergrate a music platform API
+Configurability: Allowed the user to choose between Deezer and Spotify for metadata fetching. Used environment variables for Spotify API credentials.
 
-APC Version 1.0
+Metadata and Album Art: Fetched and saved album art and metadata for each album.
+
+User Interaction: Prompted the user for input paths and service choice.
+
+Playlist and Album Copying: Created .m3u playlists and copied albums with metadata and album art.
+
+APC Version 2.0
