@@ -1,182 +1,172 @@
-import shutil
 import os
-from threading import Thread
-from mutagen.easyid3 import EasyID3
-from mutagen.id3 import ID3, APIC
-from mutagen.mp3 import MP3
+import shutil
+import requests
+import logging
+from pathlib import Path
+from PIL import Image
+from io import BytesIO
 
-audio_path = []
-new_audio_path = []
-audio_title = []
+# Set up logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-album = ""
+class PlaylistCreator:
+    def __init__(self, music_dir, playlist_dir, output_dir, service="deezer"):
+        self.music_dir = Path(music_dir)
+        self.playlist_dir = Path(playlist_dir)
+        self.output_dir = Path(output_dir)
+        self.supported_formats = ['.mp3', '.wav', '.flac', '.m4a']
+        self.service = service
+        self.deezer_api_url = "https://api.deezer.com/search"
+        self.spotify_api_url = "https://api.spotify.com/v1/search"
+        self.spotify_token = self.get_spotify_token() if service == "spotify" else None
 
-def check_path(type):
-    if type == "music_dir":
-        path_to_music = input("[*] Enter path to folder with Music: ")
-        if os.path.isdir(path_to_music):
-            return path_to_music
-        else:
-            print(f"[-] Folder `{path_to_music}` does not exist")
-            exit()
+    def validate_directories(self):
+        """Ensure the music, playlist, and output directories exist."""
+        if not self.music_dir.exists():
+            raise FileNotFoundError(f"Music directory not found: {self.music_dir}")
+        if not self.playlist_dir.exists():
+            self.playlist_dir.mkdir(parents=True, exist_ok=True)
+        if not self.output_dir.exists():
+            self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    elif type == "album_dir":
-        path_to_album = input("[*] Enter path to create album: ")
-        if os.path.isdir(path_to_album):
-            return path_to_album
-        else:
-            print(f"[-] Folder `{path_to_album}` does not exist")
-            exit()
-
-    elif type == "image":
-        cover_path = input('[*] Enter the Path to the album art (`.png` or `.jpg`): ')
-        if os.path.isfile(cover_path) and (cover_path.endswith('png') or cover_path.endswith('jpg')):
-            return cover_path
-        else:
-            print(f"[-] Path to image `{cover_path}` does not exist.")
-            exit()
-
-    elif type == "album_name":
-        album = input("[*] Enter the preferred name for your Playlist: ")
-        return album
-
-def audio_files():
-
-    path = check_path(type="music_dir")
-    try:
-        for root, dirs, files in os.walk(os.path.abspath(path)):
+    def get_albums(self):
+        """Scan the music directory and organize songs into albums."""
+        albums = {}
+        for root, _, files in os.walk(self.music_dir):
             for file in files:
-                if file.endswith(".mp3"):
-                    file_path = os.path.join(root, file)
-                    audio_path.append(file_path)
-                    audio_title.append(file)
-    except:
-        pass
+                if any(file.lower().endswith(ext) for ext in self.supported_formats):
+                    album_name = Path(root).name
+                    if album_name not in albums:
+                        albums[album_name] = []
+                    albums[album_name].append(Path(root) / file)
+        return albums
 
+    def get_spotify_token(self):
+        """Get Spotify API token using client credentials flow."""
+        client_id = os.getenv("SPOTIFY_CLIENT_ID", "your_spotify_client_id")
+        client_secret = os.getenv("SPOTIFY_CLIENT_SECRET", "your_spotify_client_secret")
+        if client_id == "your_spotify_client_id" or client_secret == "your_spotify_client_secret":
+            logging.warning("Spotify client ID or secret not set. Please set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET.")
+            return None
 
-# TO DO: ADD AUTO ALBUM ART EDITOR	
-'''
-def album_art():
+        auth_url = "https://accounts.spotify.com/api/token"
+        auth_response = requests.post(
+            auth_url,
+            data={"grant_type": "client_credentials"},
+            auth=(client_id, client_secret),
+        )
+        auth_response.raise_for_status()
+        return auth_response.json()["access_token"]
 
-    audio_files()
-    cover_path = check_path(type="image")
-    for i in new_audio_path:
-        audio = MP3(i, ID3=ID3)
+    def fetch_album_metadata(self, album_name):
+        """Fetch album metadata (art, artist, release year, genre) using Deezer or Spotify API."""
+        metadata = {"art": None, "artist": None, "release_year": None, "genre": None}
 
         try:
-            audio.tags.add(APIC(mime='image/jpeg', type=3, desc=u'Cover', data=open(cover_path, 'rb').read()))
+            if self.service == "deezer":
+                response = requests.get(self.deezer_api_url, params={"q": album_name, "type": "album"})
+                data = response.json()
+                if data.get("data"):
+                    album_data = data["data"][0]
+                    metadata["art"] = album_data.get("cover_big")
+                    metadata["artist"] = album_data.get("artist", {}).get("name")
+                    metadata["release_year"] = album_data.get("release_date", "").split("-")[0]
+                    metadata["genre"] = album_data.get("genres", {}).get("data", [{}])[0].get("name")
+
+            elif self.service == "spotify" and self.spotify_token:
+                headers = {"Authorization": f"Bearer {self.spotify_token}"}
+                response = requests.get(
+                    self.spotify_api_url, headers=headers, params={"q": album_name, "type": "album"}
+                )
+                data = response.json()
+                if data.get("albums", {}).get("items"):
+                    album_data = data["albums"]["items"][0]
+                    metadata["art"] = album_data.get("images", [{}])[0].get("url")
+                    metadata["artist"] = album_data.get("artists", [{}])[0].get("name")
+                    metadata["release_year"] = album_data.get("release_date", "").split("-")[0]
+                    metadata["genre"] = album_data.get("genres", [""])[0]
 
         except Exception as e:
-            print(f"[-] An Error occurred: {e}")
-            exit()
+            logging.error(f"Error fetching metadata for {album_name}: {e}")
 
-        audio.save()
-'''
+        return metadata
 
-def set_id3_tag():
-    audio_files()
-    album = check_path(type="album_name")
+    def download_album_art(self, album_name, output_dir):
+        """Download and save album art for a given album."""
+        metadata = self.fetch_album_metadata(album_name)
+        if metadata["art"]:
+            try:
+                response = requests.get(metadata["art"])
+                if response.status_code == 200:
+                    image = Image.open(BytesIO(response.content))
+                    image_path = output_dir / f"{album_name}.jpg"
+                    image.save(image_path)
+                    logging.info(f"Downloaded album art for: {album_name} at {image_path}")
+                    return image_path
+            except Exception as e:
+                logging.error(f"Error downloading album art for {album_name}: {e}")
+        logging.warning(f"No album art found for: {album_name}")
+        return None
 
-    copy_files(album)
-    artist = None
-    albumartist = None
+    def save_metadata(self, album_name, output_dir, metadata):
+        """Save album metadata to a text file."""
+        metadata_path = output_dir / f"{album_name}_metadata.txt"
+        try:
+            with open(metadata_path, "w", encoding="utf-8") as metadata_file:
+                metadata_file.write(f"Album: {album_name}\n")
+                metadata_file.write(f"Artist: {metadata['artist']}\n")
+                metadata_file.write(f"Release Year: {metadata['release_year']}\n")
+                metadata_file.write(f"Genre: {metadata['genre']}\n")
+            logging.info(f"Saved metadata for: {album_name} at {metadata_path}")
+        except Exception as e:
+            logging.error(f"Error saving metadata for {album_name}: {e}")
 
-    genre = None
-    track_num = 0
-    comments = "Compiled and encoded by theHauntedMemories"
-    total_track_num = len(audio_path)
-    disc_num = 1
-    total_disc_num = None
-    num = -1
+    def create_playlists(self):
+        """Create playlists for each album."""
+        self.validate_directories()
+        albums = self.get_albums()
 
-    try:
-        for i in new_audio_path:
-            track_num+=1
-            num+=1
-            tags = EasyID3(i)
+        for album, songs in albums.items():
+            playlist_path = self.playlist_dir / f"{album}.m3u"
+            try:
+                with open(playlist_path, 'w', encoding='utf-8') as playlist_file:
+                    for song in songs:
+                        playlist_file.write(f"{song}\n")
+                logging.info(f"Created playlist for album: {album} at {playlist_path}")
+            except Exception as e:
+                logging.error(f"Error creating playlist for {album}: {e}")
 
-            title = audio_title[num]
-            tags['title'] = title.capitalize()
+    def copy_albums(self):
+        """Copy albums to a new directory, organized by album name, and add album art and metadata."""
+        self.validate_directories()
+        albums = self.get_albums()
 
-            if artist:
-                tags['artist'] = artist
-            if copyright:
-                tags['copyright'] = comments
-            if albumartist:
-                tags['albumartist'] = albumartist
+        for album, songs in albums.items():
+            album_dir = self.output_dir / album
+            album_dir.mkdir(exist_ok=True)
+            for song in songs:
+                try:
+                    shutil.copy(song, album_dir / song.name)
+                except Exception as e:
+                    logging.error(f"Error copying song {song} for album {album}: {e}")
+            # Download and add album art
+            self.download_album_art(album, album_dir)
+            # Fetch and save metadata
+            metadata = self.fetch_album_metadata(album)
+            self.save_metadata(album, album_dir, metadata)
+            logging.info(f"Copied album: {album} to {album_dir}")
 
-            tags['album'] = album.capitalize()
+if __name__ == "__main__":
+    # Example usage
+    music_directory = input("Enter the path to your music directory: ")
+    playlist_directory = input("Enter the path to save playlists: ")
+    output_directory = input("Enter the path to copy organized albums: ")
+    service = input("Choose metadata service (deezer/spotify): ").lower()
 
-            if genre:
-                tags['genre'] = genre
-            if total_track_num:
-                if track_num:
-                    tags['tracknumber'] = '{}/{}'.format(track_num, total_track_num)
-                else:
-                    tags['tracknumber'] = '/{}'.format(total_track_num)
-            else:
-                if track_num:
-                    tags['tracknumber'] = '{}'.format(track_num)
-            if total_disc_num:
-                if disc_num:
-                    tags['discnumber'] = '{}/{}'.format(disc_num, total_disc_num)
-                else:
-                    tags['discnumber'] = '/{}'.format(total_disc_num)
-            else:
-                if track_num:
-                    tags['discnumber'] = '{}'.format(disc_num)
+    if service not in ["deezer", "spotify"]:
+        logging.error("Invalid service choice. Defaulting to Deezer.")
+        service = "deezer"
 
-            tags.save()
-
-    except Exception as e:
-        print(f"[-] An Error occurred: {e}")
-        exit()
-
-    #finally:
-        #copy_files(album)
-        #tags.save()
-
-def copy_files(album):
-    folder_name = check_path(type="album_dir")
-    new_dir = f"{folder_name}/{album}"
-    os.mkdir(new_dir)
-    num = -1
-    t_num = 0
-    print(f"\n[*] Copying music files to the new album folder `{new_dir}`\n\tMight take a while...\n")
-    try:
-        for i in audio_path:
-            num+=1
-            t_num+=1
-
-            new_path = f"{new_dir}/0{t_num} {audio_title[num]}"
-            new_audio_path.append(new_path)
-            shutil.copy(i, new_path)
-    except Exception as e:
-        print(f"[-] An error occurred `{e}`")
-        exit()
-    finally:
-        print("\n[+] Operation finished. Enjoy!")
-
-def main():
-    print("\n\t [**] PLAYLIST CREATOR [**]\n\t\t By theHauntedMemories\n")
-
-    try:
-        #set_id3_tag()
-        t = Thread(target=set_id3_tag)
-        t.start()
-    except KeyboardInterrupt:
-        exit()
-
-
-if __name__ == '__main__':
-
-    try:
-        #set_id3_tag()
-        t = Thread(target=main)
-        t.start()
-    except KeyboardInterrupt:
-        t.join()
-        exit()
-
-
-
+    creator = PlaylistCreator(music_directory, playlist_directory, output_directory, service)
+    creator.create_playlists()
+    creator.copy_albums()
